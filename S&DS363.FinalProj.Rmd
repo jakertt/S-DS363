@@ -1,0 +1,589 @@
+---
+title: "S&DS 363 Final Project: Human Development Data"
+author: "Jake Todd"
+output:
+  pdf_document: default
+  html_document: default
+date: "2025-05-03"
+urlcolor: blue
+fontsize: 16pt
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, include = FALSE}
+library(corrplot)
+library(PerformanceAnalytics)
+library(FactoMineR)
+library(car)
+library(ggplot2)
+library(dplyr)
+library(MASS)
+library(biotools)
+library(klaR)
+library(lubridate)
+library(ggExtra)
+library(fpc)
+library(cluster)
+library(ape)
+library(amap)
+library(aplpack)
+library(vegan)
+library(vegan3d)
+library(mgcv)
+library(rgl)
+```
+
+```{r, include = FALSE}
+data <- read.csv("/Users/jaketodd/Desktop/testdata/final_finalproj.csv")
+data2 <- data %>% dplyr::select('name', 'country', 'sub.region')
+```
+```{r, include = FALSE}
+dev <- read.csv('/Users/jaketodd/Desktop/testdata/Human Development Index - Full.csv')
+```
+
+```{r, include = FALSE}
+dev$ISO3 <- tolower(dev$ISO3)
+colnames(dev)
+dev2 = dev %>% dplyr::select('ISO3', 'Human.Development.Groups', 'HDI.Rank..2021.', 'Human.Development.Index..2021.', 'Life.Expectancy.at.Birth..2021.', 'Expected.Years.of.Schooling..2021.', 'Mean.Years.of.Schooling..2021.', 'Gross.National.Income.Per.Capita..2021.', 'Gender.Development.Index..2021.', 'HDI.female..2021.', 'HDI.male..2021.', 'Gender.Inequality.Index..2021.', 'Maternal.Mortality.Ratio..deaths.per.100.000.live.births...2021.', 'Carbon.dioxide.emissions.per.capita..production...tonnes...2021.')
+```
+
+```{r, include = FALSE}
+comb <- dev2 %>% left_join(data2, by = c('ISO3' = 'country'))
+```
+
+```{r, include = FALSE}
+comb <- comb %>% dplyr::select('name', 'sub.region', 'ISO3', 'Human.Development.Groups', 'HDI.Rank..2021.', 'Human.Development.Index..2021.', 'Life.Expectancy.at.Birth..2021.', 'Expected.Years.of.Schooling..2021.', 'Mean.Years.of.Schooling..2021.', 'Gross.National.Income.Per.Capita..2021.', 'Gender.Development.Index..2021.', 'HDI.female..2021.', 'HDI.male..2021.', 'Gender.Inequality.Index..2021.', 'Maternal.Mortality.Ratio..deaths.per.100.000.live.births...2021.', 'Carbon.dioxide.emissions.per.capita..production...tonnes...2021.')
+```
+```{r, include = FALSE}
+comb <- na.omit(comb)
+```
+```{r, include = FALSE}
+comb$name[10] <- 'Burundi'
+```
+
+```{r, include = FALSE}
+write.csv(comb, file = "/Users/jaketodd/Desktop/testdata/ProjectFinal.csv", row.names = FALSE)
+```
+
+```{r, include = FALSE}
+CSQPlot<-function(vars,label="Chi-Square Quantile Plot"){
+#usually, vars is xxx$residuals or data from one group and label is for plot
+  x<-cov(scale(vars),use="pairwise.complete.obs")
+  squares<-sort(diag(as.matrix(scale(vars))%*%solve(x)%*%as.matrix(t(scale(vars)))))
+  quantiles<-quantile(squares)
+  hspr<-quantiles[4]-quantiles[2]
+  cumprob<-c(1:length(vars[,1]))/length(vars[,1])-1/(2*length(vars[,1]))
+  degf<-dim(x)[1]
+  quants<-qchisq(cumprob,df=degf)
+  gval<-(quants**(-1+degf/2))/(exp(quants/2)*gamma(degf/2)*(sqrt(2)**degf))
+  scale<-hspr / (qchisq(.75,degf)-qchisq(.25,degf))
+  se<-(scale/gval)*sqrt(cumprob*(1-cumprob)/length(squares))
+  lower<-quants-2*se
+  upper<-quants+2*se
+  plot(quants,squares,col='red',pch=19,cex=1.2,xlab="Chi-Square Quantiles", 
+       ylab=label,main=paste("Chi-Square Quantiles for",label),ylim=range(upper,lower, squares) , xlim=range(c(0,quants)))
+  lines(c(0,100),c(0,100),col=1)
+  lines(quants,upper,col="blue",lty=2,lwd=2)
+  lines(quants,lower,col="blue",lty=2,lwd=2)
+  legend(0,range(upper,lower)[2]*.9,c("Data","95% Conf Limits"),lty=c(0,2),col=c("red","blue"),lwd=c(2,2),
+pch=c(19,NA), cex = 0.5)
+}
+```
+
+**Introduction**
+
+  The wellbeing of a country can largely be described by its human development index, where high values indicate high levels of development and low values indicate low levels of development. This index is a complex combination of factors involving education levels, income, and other factors that are all related to how "developed" the country is on a global scale. My dataset includes many descriptors of various countries that are all related to human development -- because of this, there is a large amount of collinearity in the dataset, but also distinct groupings as these variables are all predictive of human development category. Because of this high dimensional data structure, this dataset is perfect for certain multivariate techniques learned in class.
+  
+   Essentially, the goal of this project is to perform exploratory data analysis on a dataset that I cleaned and in which I have personal interest. As I am interested in human geography and global development patterns, I find this dataset to be highly interesting, and perfect for multivariate statistical analysis. The techniques that I applied to this dataset are in the following section.
+  
+**Planned Analysis**
+
+In this project, I hope to answer some questions like: how many variables are truly predictive of human development and can these variables be used to cluster at a higher level (like sub region, rather than country). I also hope to discover more about the higher dimensional structure of the data.
+
+As I suspect that many of the variables are collinear, I first plan to perform Principal Components Analysis (PCA) on the data. This technique looks for linear structure in high dimensional space and dimension reduces by transforming the data into a new basis. This will allow me to see how many principal components can be used to explain a significant amount of variability in the data. I suspect that we will need very few.
+
+For the next analysis, since we have groupings from the human development information, I decided to use this categorical variable as groupings and attempt to find a method to distinguish these groupings using Discriminant Analysis (DA). I will remove variables that are directly related to HDI (HDI male, HDI female, etc) and attempt to find discriminant functions that created decision rules that accurately classify my data. Again, I suspect that, since most of the variables are strongly correlated with human development index, we will not need many discriminating functions, and this task will not be too difficult.
+
+For the final analysis, I will perform Cluster Analysis. I thought that it would be interesting to look at clusterings for the different sub regions, and see if "similar" subregions cluster together. For this, I will take the means of all of my continuous variables by subregion (of which there are 16) and normalize the data. I will then produce dendrograms and evaluate how many clusters we should keep as well as the cluster interpretablity.
+
+**Data/Descriptions of Variables**
+
+I downloaded this dataset from [Kaggle](https://www.kaggle.com/datasets/iamsouravbanerjee/human-development-index-dataset), which is an opensource data repository with both cleaned and uncleaned datasets. I took this data and appended sub-region information from another dataset. I then filtered out variables to be just their 2021 values (the most recent) and omitted NA values so I was working with complete data. I also manually checked the sub-regions and ensured accuracy, as some data was slightly incorrect, so these points were questionable. Otherwise, it appears that other (remaining) points are not questionable.
+
+Again, this dataset has many many variables, and I have cleaned the data to only include 2021 data. Below is the list of variables and a short description of each.
+
+**name** (index): The name of the country, which serves as the unique index.
+
+**sub.region** (categorical): The world region to which each country belongs.
+
+**ISO3** (index): The unique 3 letter code for each country, which was used to join tables
+
+**Human.Development.Groups** (categorical): Four groups that are related to how high/low a country's human development index is
+
+**HDI.Rank..2021.** (continuous): A discrete variable that ranks each country in the dataset by HDI -- not really used
+
+**Human.Development.Index..2021.** (continuous): the 0 to 1 index of human development that describes how "developed" a country is on the global scale
+
+**Life.Expectancy.at.Birth..2021.** (continuous): the number of years that someone is expected to live in each country from the time they are born
+
+**Expected.Years.of.Schooling..2021.** (continuous): the number of years that a child is expected to be in school
+
+**Mean.Years.of.Schooling..2021.** (continuous): the actual average number of years that a child is in school
+
+**Gross.National.Income.Per.Capita..2021.** (continuous): the average income per person in USD in each country
+
+**Gender.Development.Index..2021.** (continuous): a 0 to 1 metric of the difference in human development variables between men and women
+
+**HDI.female..2021.** (continuous): a 0 to 1 index of human development for specifically females
+
+**HDI.male..2021.** (continuous): a 0 to 1 index of human development for specifically males
+
+**Gender.Inequality.Index..2021** (continuous): another 0 to 1 index where a higher value indicates more inequality between females and males in health, employment, etc.
+
+**Maternal.Mortality.Ratio..deaths.per.100.000.live.births...2021.** (continuous): the number of deaths of mothers per 100,000 live births
+
+**Carbon.dioxide.emissions.per.capita..production...tonnes...2021.** (continuous): the number of tonnes per person emitted annually
+
+It is easy to tell that many of these variables are strongly related to each other. Lets look at just how strong this relationship is as well as some distributions of variables.
+
+**Plots**
+
+Lets check information about collinearity between variables, as this is my suspicion about this dataset. If we have a lot of multicollinearity, then it might be best to dimension reduce.
+
+```{r, echo = FALSE, fig.height=3, fig.width=5}
+chart.Correlation(comb[,5:ncol(comb)])
+```
+
+*Figure 1: Correlations between continuous variables in the dataset*
+
+Note: it is hard to see variable names, but for the continuous variables, they are the same order as listed above in the description. Well, there is definitely a linear structure in higher dimensional space. Therefore, PCA is a good choice for this dataset. We can look at some specific variables that may need transformations to be more normally distributed in future techniques. We can see that many of the variables, based on the distributions, appear to be normally distributed, but for those that are exponentially distributed, we should transform them. Below are three pre-transformation variables.
+
+```{r, echo = FALSE, fig.height = 3}
+par(mfrow=c(1,3), cex = 0.5)
+hist(comb$Gross.National.Income.Per.Capita..2021., col = 'darkblue', main = 'GNI per Capita Histogram')
+hist(comb$Maternal.Mortality.Ratio..deaths.per.100.000.live.births...2021., col = 'darkred', main = 'Maternal Mortality Ratio Histogram')
+hist(comb$Carbon.dioxide.emissions.per.capita..production...tonnes...2021., col = 'darkgreen', main = 'CO2 emissions per Capita Histogram')
+```
+
+*Figure 2: Distributions of 3 exponentially distributed variables*
+
+These variables appear to be exponentially distributed, which means that we should perform a transformation on the data. We can log transform these to get these variables to be normally distributed.
+
+```{r, include = FALSE}
+table(comb$Human.Development.Groups)
+comb$log.Maternal.Mortality.Ratio..deaths.per.100.000.live.births...2021. <- log(comb$Maternal.Mortality.Ratio..deaths.per.100.000.live.births...2021.)
+comb$log.Carbon.dioxide.emissions.per.capita..production...tonnes...2021. <- log(comb$Carbon.dioxide.emissions.per.capita..production...tonnes...2021.)
+comb$log.Gross.National.Income.Per.Capita..2021. <- log(comb$Gross.National.Income.Per.Capita..2021.)
+```
+
+Below are the histograms for the log transformed variables.
+
+```{r, echo = FALSE, fig.height = 3}
+par(mfrow=c(1,3), cex = 0.5)
+hist(comb$log.Gross.National.Income.Per.Capita..2021., col = 'darkblue', main = 'log GNI per Capita Histogram')
+hist(comb$log.Maternal.Mortality.Ratio..deaths.per.100.000.live.births...2021., col = 'darkred', main = 'log Maternal Mortality Ratio Histogram')
+hist(comb$log.Carbon.dioxide.emissions.per.capita..production...tonnes...2021., col = 'darkgreen', main = 'log CO2 emissions per Capita Histogram')
+```
+
+*Figure 3: Log transformations of 3 exponential variables*
+
+That is a BIT closer to a normal distribution. We can likely use this data for future analyses that require multivariate normality. Finally for this section, lets look at some summary statistics for our variables. Unfortunately, the output is a bit long (and so are the variable names).
+
+```{r, echo = FALSE}
+summary(comb[,5:ncol(comb)])
+```
+
+We can see that a lot of our variables have fairly wide ranges, so there is likely some discrepancy between human development groups, for instance.
+
+As for data outliers, due to the high dimensionality of our data, we will analyze this after dimension reduction in PCA space with score plots.
+
+Lets begin with our first multivariate technique, principal components analysis!
+
+**Multivariate Technique 1: PCA**
+
+Principal components analysis, or PCA, is a technique that looks for higher dimensional structure in the data (linearity in high dimensional space) and attempts to reduce dimensions based on this linearity while maintaining the variance of the data. Each principal component is orthogonal to the others, so essentially, this acts as an axis-shift in high dimensional space. When we have large amounts of multicollinearity between variables, we know that PCA will likely work well for our data. As we can see from our initial data explorations, we have a significant amount of multicollinearity (in fact, EVERYTHING is collinear). We can also look at a different representation of correlations. The variable names are so long, so I decided to omit them.
+
+```{r, echo = FALSE, fig.height = 3, fig.width = 3}
+corrplot.mixed(cor(comb[,5:ncol(comb)]), lower.col = "black", upper = "ellipse", tl.col = "black", number.cex=.3, order = "hclust", tl.pos = "lt", tl.cex=.01, main="")
+```
+
+*Figure 4: Mixed correlation plot*
+
+There is a LOT of multicollinearity in the data, as seen in the correlation plot. We can see that most variables have correlations above 0.5 (absolute value). This makes sense, as all of our data is related to health and wellbeing of countries, so it would make sense that the data is collinear. This makes it very ideal for PCA, and we will likely end up with very few principal components.
+  
+This is because PCA, or principal components analysis, looks for dimensions with the greatest variability in the data and essentially "rotates" the axes in high dimensional space. These new axes are then used as the principal components, and we can reduce the principal components of the data until we pass a threshold of maintained variability. Essentially, we know that if 2 variables (in 2D space) are perfectly collinear, then this means that one dimension can be used to describe the data (linear combination of the variables). With this dataset, we would expect that very few dimensions could be used to describe the high dimensional data.
+    
+Lets briefly check if we have multivariate normality:
+
+```{r, echo = FALSE, fig.height=3, fig.width=5}
+CSQPlot(comb[,5:ncol(comb)])
+```
+
+*Figure 5: Chi-square quantile plot to check multivariate normality (final)*
+
+  We ALMOST have multivariate normality (roughly) in our data, but likely, to achieve multivariate normality, we would need to perform some transformations. Multivariate normality is not an assumption for PCA, so we can absolutely continue with PCA in this case. However, this also indicates that we can likely perform other statistical methods that require multivariate normality. Lets perform PCA and look at how many principal components we can keep from our dataset.
+  
+```{r, include = FALSE}
+summary.PCA.JDRS <- function(x){
+  sum_JDRS <- summary(x)$importance
+  sum_JDRS[1, ] <- sum_JDRS[1, ]^2
+  attr(sum_JDRS, "dimnames")[[1]][1] <- "Eigenvals (Variance)" 
+  sum_JDRS
+}
+```
+
+```{r, include = FALSE}
+df <- comb[,5:ncol(comb)]
+```
+
+```{r, echo = FALSE}
+pca1 <- prcomp(df, scale. = TRUE) 
+round(summary.PCA.JDRS(pca1),2)
+```
+```{r, echo = FALSE, fig.height=3, fig.width=5}
+source("https://raw.githubusercontent.com/jreuning/sds363_code/refs/heads/main/parallel.r.txt")
+par(mfrow = c(1, 1), cex.main = 0.8, cex.lab = 0.8, cex.axis = 0.7)
+parallelplot(pca1)
+```
+
+*Figure 6: Scree Plot including Parallel Analysis Limits*
+
+For the loadings, we actually only have one eigenvalue greater than 1 -- this means that essentially one principal component can explain the variability in our data. It also explains roughly 80% of the variance in the data, which is very high. This points to a very structured dataset in high dimensional space. We can also see in the screeplot that we have an elbow at PC2, indicating that we should really only keep 1 principal component in the data. However, for the sake of visualization, we will keep 2. The parallel analysis (which, for the sake of this analysis, I assumed multivariate normality even though the data is not exactly multivariate normal) suggests keeping just 1 of the principal components as well. We have a strong consensus regarding how many principal components to keep -- just one! However, we will sometimes use 2 or 3 just for visualization purposes.
+
+```{r, echo = FALSE}
+par(mfrow = c(1, 2), cex.main = 0.8, cex.lab = 0.8, cex.axis = 0.7)
+pca1 <- PCA(df, scale.unit = T)
+```
+
+*Figure 7: Principal components plot with overlaid directional vectors for variables*
+
+We can see from these figures that principal component 1 likely relates to the wealth of a country -- low values seem to indicate that a country is very poor and experiences significant social and political unrest, whereas high values seem to indicate the opposite. Principal component 1 explains roughly 80% of the variance in the data. Principal component 2 seems to be a bit more difficult to interpret, with higher values indicating more carbon emissions per capita and lower values indicating more schooling and higher gender development index. Perhaps this component is related to the quality of institutions. Countries with more established institutions and a stable (not rapidly growing) economic system might be lower on PC2, whereas those that are newly developed and have less established government oversight might be higher on PC2.
+
+Lets now look at some scoreplots for the data -- we can look at 3 principal components here.
+
+```{r, include = FALSE}
+source("https://raw.githubusercontent.com/jreuning/sds363_code/refs/heads/main/ciscoreplot.r.txt")
+pca1 <- prcomp(df, scale. = TRUE)
+```
+
+```{r, echo = FALSE, fig.height=3}
+par(mfrow = c(1, 3), cex.main = 0.8, cex.lab = 0.8, cex.axis = 0.7)
+plot(pca1$x[,c(1,2)])
+plot(pca1$x[,c(2,3)])
+plot(pca1$x[,c(1,3)])
+```
+
+*Figure 8: Principal components plots for the first 3 principal components*
+
+These plots show representations of the data on the first 3 principal components. There appear to be some outliers on these plots, so certain countries might be very distinct when it comes to these principal components. Lets now look at some score plots to determine which countries might be outliers on these plots.
+
+```{r, echo = FALSE, warning = FALSE, fig.height=3}
+par(mfrow = c(1, 3), cex.main = 0.8, cex.lab = 0.8, cex.axis = 0.7)
+ciscoreplot(pca1, c(1, 2), comb$name)
+ciscoreplot(pca1, c(2, 3), comb$name)
+ciscoreplot(pca1, c(1, 3), comb$name)
+```
+
+*Figure 9: Score plots for first 3 principal components*
+
+We can see that the same countries tend to be outliers for the first 3 principal components (Chad, Afghanistan, Qatar, etc). This is interesting, and likely indicates that these countries have some factors that are not necessarily represented in the data that influence certain variables. For example, with Chad and Afghanistan, political instability could be a large influencing factor. For Qatar, an influx of oil money could be a contributing factor. Its hard to tell...
+
+It looks like PCA worked very well for our dataset due to the large amount of collinearity. The data is actually so collinear that we only truly had one significant principal component. This might make the rest of the project a bit challenging, but lets give it a shot! Given that we have close to multivariate normality, lets go ahead and do Linear Discriminant Analysis.
+
+**Multivariate Technique 2: DA**
+
+Discriminant analysis, or DA, is a method for differentiating between different categories of the data using a linear or quadratic decision rule. It attempts to use the most significant variables in the discrimination to create a decision rule. For this, lets look at human development groups and only use variables that allow for multivariate normality. First, I will remove HDI predictors, because they are trivial in this situation and were used to create the response variable. Second, we need use the log transform of GNI per capita, carbon emissions, and maternal mortality ratio.
+
+```{r, echo = FALSE}
+CSQPlot(comb[,c(8, 17, 18, 19)])
+```
+
+*Figure 10: Chi-square quantile plot for all groups*
+
+Looks like we have multivariate normality across all groups if we keep expected years of schooling, log maternal mortality ratio, log carbon emissions per capita, and log GNI per capita. Lets now check within each group (of which, we have 4). This is because discriminant analysis requires multivariate normality WITHIN groups.
+
+```{r, include = FALSE}
+groupHigh <- comb[comb$Human.Development.Groups == 'High',]
+groupLow <- comb[comb$Human.Development.Groups == 'Low',]
+groupMed <- comb[comb$Human.Development.Groups == 'Medium',]
+groupVHigh <- comb[comb$Human.Development.Groups == 'Very High',]
+```
+```{r, echo = FALSE}
+par(mfrow = c(2,2), cex.main = 0.8, cex.lab = 0.8, cex.axis = 0.7)
+CSQPlot(groupHigh[,c(8, 17, 18, 19)])
+CSQPlot(groupLow[,c(8, 17, 18, 19)])
+CSQPlot(groupMed[,c(8, 17, 18, 19)])
+CSQPlot(groupVHigh[,c(8, 17, 18, 19)])
+```
+
+*Figure 11: Chi-square quantile plot for each group*
+
+Looks like we have approximate multivariate normality within each group (potentially with the exception of the 'low' group, but it is close enough, so we will proceed with caution). Therefore, we can proceed with discriminant analysis, since multivariate normality within groups was an assumption of discriminant analysis.
+
+Lets now check the BoxM statistic for differences in the covariance matrices between groups. Equality of covariance matrices is also an assumption of discriminant analysis. A low p-value for this analysis indicates that there is a significant difference in the covariance matrices. However, this test is also sensitive to group/data size, so we can use other methods to check whether they are the same.
+
+```{r, echo = FALSE}
+boxM(comb[,c(8, 17, 18, 19)], comb$Human.Development.Groups)
+```
+```{r, include = FALSE}
+log(det(cov(comb[comb$Human.Development.Groups=='High', c(8, 17, 18, 19)])))
+log(det(cov(comb[comb$Human.Development.Groups=='Low', c(8, 17, 18, 19)])))
+log(det(cov(comb[comb$Human.Development.Groups=='Medium', c(8, 17, 18, 19)])))
+log(det(cov(comb[comb$Human.Development.Groups=='Very High', c(8, 17, 18, 19)])))
+```
+It appears that, according to BoxM, we have quite a bit of difference between groups for our covariance matrices, which is interesting and means we may have to look at quadratic discriminant analysis rather than linear discriminant analysis. When we find the log determinants of the covariance matrices (since BoxM can be very sensitive to group size and we have some small groups), we get -3.56, -3.81, -3.46, and -2.39. These are fairly similar, indicating that the issues with the BoxM statistic may have been due to small/different sizes of each group. We will proceed with both linear and quadratic discriminant analysis. Lets look at linear discriminant analysis first.
+
+```{r, include = FALSE}
+(comblda <- lda(comb[, c(8, 17, 18, 19)], grouping = comb$Human.Development.Groups))
+```
+```{r, echo = FALSE}
+(ctraw <- table(comb$Human.Development.Groups, predict(comblda)$class))
+round(sum(diag(prop.table(ctraw))),2)
+```
+```{r, echo = FALSE, fig.height=3, fig.width=5}
+scores <- as.matrix(scale(comb[,c(8, 17, 18, 19)]))%*%matrix(c(comblda$scaling)[1:8], ncol = 2)
+
+#NOTE - if use cross-validation option, scores are calculated automatically
+plot(scores[,1], scores[,2], type = "n", main = "Linear DCA scores for HDI data",
+     xlab = "DCA Axis 1", ylab = "DCA Axis 2")
+
+combnames <- unique(comb[, 4])
+
+for (i in 1:4){
+  points(scores[comb$Human.Development.Groups == combnames[i], 1],
+         scores[comb$Human.Development.Groups == combnames[i], 2], col = i+1, pch = 14+i, cex = 1.1)
+}
+legend("topright", legend = combnames, col = c(2:5), pch = c(15, 16, 17, 18), cex = 0.5)
+```
+
+*Figure 12: Linear DCA score plot*
+
+I did not include code output for the linear discriminant analysis (since it was very long) other than the accuracy (which was 88%), but we get 3 discriminant functions (we have 4 groups, so this makes sense). However, it appears that LD1 is the only significant discriminator in this case (proportion of trace is 0.9829). We can continue looking at LD2 and LD3 however, but since our data was so collinear, likely LD1 is the only significant one, and we see this on the score plot. We can see a gradient from Low to Very High across DCA Axis 1 with some overlap, which will likely mean we will not get the best accuracy for classification. Discriminant analysis works best when there is clear separation between groups, as it uses decision rules that cannot classify accurately if points are overlapping into other groups.
+
+As for the interpretation of the discriminant analysis directions, we can really only interpret the first axis. It appears that this axis relates to income/wealth of a country. Lets look more closely at this with MANOVA.
+
+Lets look at a MANOVA test as a quick additional method for significance of each predictor. MANOVA assumes multivariate normality, so we can use this test given that we have roughly equal covariance matrices and roughly multivariate normal data. This test will give us a description of which variables are significant in predicting HDI groupings. We will also see this in stepwise DA.
+
+```{r, echo = FALSE}
+df.manova <- manova(as.matrix(comb[, c(8, 17, 18, 19)]) ~ comb$Human.Development.Groups)
+summary.aov(df.manova)
+```
+
+All of the variables are EXTREMELY significant (p values significantly less than 0.05. Again, they are collinear, so this makes sense. We will likely only need one of these variables to predict the HDI groupings. This means that our first discriminant function likely relates strongly to one/all of these variables (all related to wealth). Anyways, even though Linear Discriminant Analysis worked well, we will still try Quadratic Discriminant Analysis. I would assume that this would NOT work well, because our data is very collinear, and also we appear to have similar covariance matrices.
+
+```{r, include = FALSE}
+(dfQDA <- qda(comb[, c(8, 17, 18, 19)], grouping = comb$Human.Development.Groups))
+```
+Results of QDA:
+```{r, echo = FALSE}
+(ctraw <- table(comb$Human.Development.Groups, predict(dfQDA)$class))
+round(sum(diag(prop.table(ctraw))),2)
+```
+We have 91% accuracy for QDA -- a slight improvement! This means that, with nonlinear decision rules, we are able to capture SLIGHTLY more information about the groupings of the datapoints.
+
+And finally, since we have highly collinear data, we should use stepwise discriminant analysis to slowly add predictors and see which variables are able to accurately predict output class. This is important so we can use the simplest model possible. I am assuming that, since all of the variables predict each other, we will truly only need a few variables.
+
+```{r, include = FALSE}
+(dfstep <- stepclass(Human.Development.Groups ~ Expected.Years.of.Schooling..2021. + log.Maternal.Mortality.Ratio..deaths.per.100.000.live.births...2021. + log.Carbon.dioxide.emissions.per.capita..production...tonnes...2021. + log.Gross.National.Income.Per.Capita..2021., data = comb, method = "lda", direction = "both", fold = nrow(comb)))
+```
+```{r, echo = FALSE}
+dfstep
+```
+
+It looks like the model only really needs log GNI per capita when using cross validated results for stepwise discriminant analysis. Again, due to the collinearity of the data, this makes sense that we end up with only one variable as the descriminator. For this one, it is a bit obvious that GNI would predict human development group, since wealth is a strong predictor of human development. Our correctness rate is slightly lower with just this predictor than it was for LDA and QDA, but still fairly similar.
+
+Lets now look at some partition plots for LDA and QDA...
+
+LDA:
+
+```{r, echo = FALSE}
+partimat(as.factor(comb$Human.Development.Groups) ~ Expected.Years.of.Schooling..2021. + log.Maternal.Mortality.Ratio..deaths.per.100.000.live.births...2021. + log.Carbon.dioxide.emissions.per.capita..production...tonnes...2021. + log.Gross.National.Income.Per.Capita..2021., data = comb, method = "lda")
+```
+
+*Figure 13: Linear Discriminant Analysis partition plot*
+
+QDA:
+
+```{r, echo = FALSE}
+partimat(as.factor(comb$Human.Development.Groups) ~ Expected.Years.of.Schooling..2021. + log.Maternal.Mortality.Ratio..deaths.per.100.000.live.births...2021. + log.Carbon.dioxide.emissions.per.capita..production...tonnes...2021. + log.Gross.National.Income.Per.Capita..2021., data = comb, method = "qda")
+```
+
+*Figure 14: Quadratic Discriminant Analysis partition plot*
+
+We can see that both LDA and QDA have fairly high accuracies for classification when 2 discriminating variables are used of the 4. When using QDA, we get the lowest error when using log GNI per capita and log maternal mortality ratio (0.092 error rate).
+
+Now lets look at KNN for a non-parametric method, since we have some distinct groupings. We can compare this to our results for DA. I've encoded my own KNN classifier, and we will compare results for a value of K that I determine through trial and error.
+
+```{r, include = FALSE}
+library(caret)
+```
+
+```{r, include = FALSE}
+comb2 <- comb %>% dplyr::select(c(4, 8, 17, 18, 19))
+for(i in 1:nrow(comb2)) {
+  if(comb2[i, 1] == 'Low') {
+    comb2[i, 1] <- 1
+  } else if(comb2[i, 1] == 'Medium') {
+    comb2[i, 1] <- 2
+  } else if(comb2[i, 1] == 'High') {
+    comb2[i, 1] <- 3
+  } else if(comb2[i, 1] == 'Very High') {
+    comb2[i, 1] <- 4
+  }
+}
+```
+
+```{r, echo = FALSE}
+classification <- c()
+for(i in 1:nrow(comb2)){
+  train <- comb2[-i,]
+  test <- comb2[i,]
+  fit.knn <- train(as.factor(Human.Development.Groups)~., data = comb2, method = 'knn', tuneGrid=data.frame(k=5))
+  classification[i] <- predict(fit.knn, newdata = test)
+}
+CM <- confusionMatrix(as.factor(classification),as.factor(comb2$Human.Development.Groups))
+print(CM)
+```
+Using 5 neighbors, the accuracy is 86%. This is a fairly good accuracy. KNN (K nearest neighbors) is another group classification technique that essentially groups together points that are near to each other in high dimensional space. We can see from the confusion matrix that the diagnonal has the most values, which indicates correct classifications. This performed almost as well as discriminant analysis, which makes sense, as the groupings are fairly distinct.
+
+Overall, discriminant analysis worked fairly well for this data, but there was really only one discriminating function that distinguished each group. This is likely due to collinearity in the data and how essentially all of the variables are strong predictors themselves of HDI level.
+
+**Multivariate Technique 3: Cluster Analysis**
+
+For cluster analysis, I want to look at clusterings for the sub-regions to see if there are similarities geographically, socioeconomically, etc. For this, we will have to take averages for all of our regions to get the cluster analysis to work. I will also normalize all of the variables (subtract the mean and divide by their standard deviation).
+
+```{r, include = FALSE}
+table(comb$sub.region)
+```
+
+```{r, include = FALSE}
+clust = comb %>% dplyr::select(c(2, 6:ncol(comb)))
+clust = clust %>% group_by(sub.region) %>%
+  summarise(across(where(is.numeric), mean, na.rm = TRUE))
+clust = clust %>% dplyr::select(-c(13,14,15))
+```
+
+```{r, include = FALSE}
+clust$Human.Development.Index..2021. <- (clust$Human.Development.Index..2021. - mean(clust$Human.Development.Index..2021.))/sd(clust$Human.Development.Index..2021.)
+clust$Life.Expectancy.at.Birth..2021. <- (clust$Life.Expectancy.at.Birth..2021. - mean(clust$Life.Expectancy.at.Birth..2021.))/sd(clust$Life.Expectancy.at.Birth..2021.)
+clust$Expected.Years.of.Schooling..2021. <- (clust$Expected.Years.of.Schooling..2021. - mean(clust$Expected.Years.of.Schooling..2021.))/sd(clust$Expected.Years.of.Schooling..2021.)
+clust$Mean.Years.of.Schooling..2021. <- (clust$Mean.Years.of.Schooling..2021. - mean(clust$Mean.Years.of.Schooling..2021.))/sd(clust$Mean.Years.of.Schooling..2021.)
+clust$Gross.National.Income.Per.Capita..2021. <- (clust$Gross.National.Income.Per.Capita..2021. - mean(clust$Gross.National.Income.Per.Capita..2021.))/sd(clust$Gross.National.Income.Per.Capita..2021.)
+clust$Gender.Development.Index..2021. <- (clust$Gender.Development.Index..2021. - mean(clust$Gender.Development.Index..2021.))/sd(clust$Gender.Development.Index..2021.)
+clust$HDI.female..2021. <- (clust$HDI.female..2021. - mean(clust$HDI.female..2021.))/sd(clust$HDI.female..2021.)
+clust$HDI.male..2021. <- (clust$HDI.male..2021. - mean(clust$HDI.male..2021.))/sd(clust$HDI.male..2021.)
+clust$Gender.Inequality.Index..2021. <- (clust$Gender.Inequality.Index..2021. - mean(clust$Gender.Inequality.Index..2021.))/sd(clust$Gender.Inequality.Index..2021.)
+clust$Maternal.Mortality.Ratio..deaths.per.100.000.live.births...2021. <- (clust$Maternal.Mortality.Ratio..deaths.per.100.000.live.births...2021. - mean(clust$Maternal.Mortality.Ratio..deaths.per.100.000.live.births...2021.))/sd(clust$Maternal.Mortality.Ratio..deaths.per.100.000.live.births...2021.)
+clust$Carbon.dioxide.emissions.per.capita..production...tonnes...2021. <- (clust$Carbon.dioxide.emissions.per.capita..production...tonnes...2021. - mean(clust$Carbon.dioxide.emissions.per.capita..production...tonnes...2021.))/sd(clust$Carbon.dioxide.emissions.per.capita..production...tonnes...2021.)
+```
+Lets take both euclidean and manhattan distances for this dataset. These distance metrics are good for numeric/continuous data. Euclidean distance is a sort of "straight line" distance, while Manhattan distance is typically used for things like binary outputs. I am assuming that euclidean distance will be the best for this dataset since our data is not binary. We will try both, and see what the results look like. Our variables are already scaled, so we can proceed. If we did not scale our data, some variables might be over-emphasized in the distance metrics, since they have very high values and distances would be larger between variables with greater range.
+
+```{r, include = FALSE}
+distances <- dist(clust[, -1], method = "euclidean")
+distances2 <- dist(clust[, -1], method = "manhattan")
+```
+
+Also, lets do complete linkage and Ward's method for the agglomerations for both of these distance metrics. Complete linkage uses the maximum distance between points in potential clusters to see how similar certain data points are. Ward's method uses similarity (minimal variance) within each cluster to determine an accurate clustering. Complete linkage is standard, so I assume this will be the method we will look at.Attempting both methods will allow us to compare.
+
+```{r, include = FALSE}
+clustering <- hclust(distances)
+clustering2 <- hclust(distances2, method = "ward.D")
+clustering3 <- hclust(distances, method = "ward.D")
+clustering4 <- hclust(distances2)
+```
+
+```{r, echo = FALSE}
+par(mfrow=c(2,2), cex = 0.4)
+plot(clustering, labels = clust$sub.region, cex = 0.6, xlab = "", ylab = "Distance", main = "Clustering using Euclidean Distance and Complete Linkage")
+plot(clustering2, labels = clust$sub.region, cex = 0.6, xlab = "", ylab = "Distance", main = "Clustering using Manhattan Distance and Ward's Method")
+plot(clustering3, labels = clust$sub.region, cex = 0.6, xlab = "", ylab = "Distance", main = "Clustering using Euclidean Distance and Ward's Method")
+plot(clustering4, labels = clust$sub.region, cex = 0.6, xlab = "", ylab = "Distance", main = "Clustering using Manhattan Distance and Complete Linkage")
+```
+
+*Figure 15: Dendrograms for various distance metrics and agglomeration methods*
+
+It seems from these 4 dendrograms that all 4 methods lead to a clustering of high income regions to the left of the graph, middle-high income regions to the right of that, and low income regions all to the right of the graph. This is what I would expect, as all of these variables are ultimately related to the prosperity/development level of the region. Lets look at how many clusters we should retain. My guess is 4, since we have 4 different development levels. For the sake of brevity, we will look at just euclidean distance with complete linkage for the next steps, as this performed just as well and is more the norm for cluster analysis with data of this type.
+
+```{r, echo = FALSE, fig.height=3, fig.width=5}
+par(cex = 0.5, mfrow=c(1,2))
+source("/Users/jaketodd/Desktop/363/HClusEval3.R.txt")
+#Call the function
+hclus_eval(clust[,-1], dist_m = 'euclidean', clus_m = 'complete', plot_op = T, print_num = 15)
+```
+
+*Figure 16: Clustering evalutation plot*
+
+We can see that RSQ has an elbow at 2 and 5 seemingly. RMSSTD has a local min at 6. SPRSQ has an elbow at 2 and 5 it seems. It seems like 2 or 5 clusters appears to be the consensus. For the sake of granularity, lets go with 5 and see how this looks on the dendrogram for euclidean distance and complete linkage.
+
+```{r, echo = FALSE}
+plot(clustering, labels = clust$sub.region, cex = 0.6, xlab = "", ylab = "Distance", main = "Clustering using Euclidean Distance and Complete Linkage")
+rect.hclust(clustering, k = 5)
+```
+
+*Figure 17: Dendrogram with 5 clusters*
+
+Again, we see a cluster for wealthy regions (Northern America, Australia and New Zealand, Northern Europe, and Western Europe), high-middle income (Eastern Asia, Western Asia, Eastern Europe, and Southern Europe), middle income (Northern Africa, Melanesia, and Southern Asia), slightly higher middle income (Latin America, SE Asia, Central Asia, and Polynesia), and the lowest income (Sub-Saharan Africa). These clusters make sense logically.
+
+Lets also look at K-Means clustering for 5 clusters and see if the output is similar.
+
+```{r, echo = FALSE}
+kmeans <- kmeans(clust[,-1], centers = 5)
+for(i in 1:5){
+  cat('Cluster', i, ': ')
+  print(clust[kmeans$cluster == i,]$sub.region)
+}
+```
+We do see the same clusterings from K-Means with 5 centers. We can assume that the meanings are roughly the same as the 5 clusters above from complete linkage agglomeration with euclidean distance.
+
+```{r, include = FALSE}
+clust$sub.region
+```
+
+Lets plot the clusters in PCA 
+```{r, echo = FALSE, fig.height=3, fig.width=5}
+clust.level <- 5
+fit <- kmeans(clust[,-1], clust.level)
+rownames(clust) <- clust$sub.region
+clusplot(clust[,-1], fit$cluster, shade = F, labels = 2, lines = 0, color = T, lty = 4, main = 'Clusters in PCA space')
+```
+
+*Figure 18: Clusters in PCA space*
+
+We can see in PCA space that there are distinctly 5 clusters. The labels on each cluster align with what was seen in K-means.
+
+Overall, we can be fairly confident about the following 5 clusters.
+
+Cluster 1 (Wealthy Regions): Australia and New Zealand, Northern America, Northern Europe, and Western Europe
+
+Cluster 2 (Middle-High Income Regions): Eastern Asia, Eastern Europe, Southern Europe, Western Asia
+
+Cluster 3 (Middle Income Regions): Central Asia, Latin America and the Caribbean, Polynesia, South-eastern Asia
+
+Cluster 4 (Low Middle Income Regions): Melanesia, Northern Africa, Southern Asia
+
+Cluster 5 (Lowest Income): Sub-Saharan Africa
+
+Cluster analysis worked very well for this data, and despite needing to change the dataset a bit to fit for cluster analysis, we were able to get interpretable results. It appears that, in dimension reduced space, the clusters are clearly separated as well, which makes sense because dimension reduction retained a significant amount of variance in the dataset in the PCA section of the report.
+
+**Conclusion and Discussion**
+
+Overall, by applying the multivariate methods of principal components analysis, discriminant analysis, and cluster analysis, I was able to elucidate some interesting trends in the data.
+
+In principal components analysis, I found that the data was very linear in high-dimensional space, so therefore PCA worked well. We only needed to retain one principal component to retain nearly 80% of the variance. It appears that PC1 is related directly to the wealth of a country, but PC2 is a bit less interpretable (maybe related to the "newness" of development and the establised institutions?). This technique overall worked very well on the data.
+
+The second technique was discriminant analysis, which proved to be quite interesting due to the multicollinearity. Much of the variables in the data were normally distributed, which allowed us to perform discriminant analysis. Due to the similarity of the covariance matrices for each human development group, I performed both LDA and QDA as well as stepwise discriminant analysis. Only one variable in stepwise DA (log GNI per capita) was retained. We saw an accuracy of 88% for the classification using linear decision rules and 91% when using quadratic. This was a fairly good classification, but really the groups were only separated by the first discriminant function.
+
+For the final technique, cluster analysis, I found that both euclidean distance and manhattan distance as well as both complete linkage agglomeration and ward's method agglomeration worked well for the data, and led to interpretable dendrograms. The clusters that formed appeared to be related to the wealth of the subregions (to be expected). The clusters also seemed to be the same with K-means clustering.
+
+Finally, for some future directions for this project, it would be nice to explore some additional data that is not necessarily collinear. The collinearity made many of the techniques quite simple/effective, but the results were not quite as interesting as they may have been without the massive amounts of multicollinearity. I also think that looking at different variables could be interesting -- discriminant analysis based on subregion for example could make provide more separability, and it is not quite as strongly predicted as HDI grouping.
+
+Anyways, thats all for my report. Thank you so much!
+
+
+
+
+
+
