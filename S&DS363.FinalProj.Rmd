@@ -37,11 +37,11 @@ library(rgl)
 ```
 
 ```{r, include = FALSE}
-data <- read.csv("/Users/jaketodd/Desktop/testdata/final_finalproj.csv")
+data <- read.csv("final_finalproj.csv")
 data2 <- data %>% dplyr::select('name', 'country', 'sub.region')
 ```
 ```{r, include = FALSE}
-dev <- read.csv('/Users/jaketodd/Desktop/testdata/Human Development Index - Full.csv')
+dev <- read.csv("Human Development Index - Full.csv")
 ```
 
 ```{r, include = FALSE}
